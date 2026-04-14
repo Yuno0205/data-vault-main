@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { MessageBus } from "./messaging/messageBus";
 import type { VaultRequest } from "./messaging/types";
+import { useDebouncedValue } from "./hooks/useDebouncedValue";
 
 type RecordItem = {
   id: string;
@@ -12,6 +13,9 @@ type RecordItem = {
 type QueryResponse = {
   items: RecordItem[];
   total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
 };
 
 const DATA_VAULT_ORIGIN = "http://localhost:5174";
@@ -21,11 +25,17 @@ export default function App() {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   const [bus, setBus] = useState<MessageBus | null>(null);
-  const [pingResult, setPingResult] = useState<string>("");
+  const [pingResult, setPingResult] = useState("");
   const [records, setRecords] = useState<RecordItem[]>([]);
-  const [total, setTotal] = useState<number>(0);
-  const [loading, setLoading] = useState<boolean>(false);
-  const [error, setError] = useState<string>("");
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(50);
+  const [totalPages, setTotalPages] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+
+  const debouncedSearch = useDebouncedValue(searchTerm, 200);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -52,6 +62,11 @@ export default function App() {
 
   const canSend = useMemo(() => bus !== null, [bus]);
 
+  // Reset page khi search đổi
+  useEffect(() => {
+    setPage(1);
+  }, [debouncedSearch]);
+
   async function handlePing() {
     if (!bus) return;
 
@@ -72,34 +87,70 @@ export default function App() {
     }
   }
 
-  async function handleLoadRecords() {
+  useEffect(() => {
     if (!bus) return;
 
-    setLoading(true);
-    setError("");
+    let cancelled = false;
 
-    try {
-      const request: VaultRequest = {
-        id: crypto.randomUUID(),
-        action: "records.query",
-        payload: {
-          search: "",
-        },
-      };
+    async function fetchRecords() {
+      setLoading(true);
+      setError("");
 
-      const result = await bus.send<QueryResponse>(request);
+      try {
+        const request: VaultRequest = {
+          id: crypto.randomUUID(),
+          action: "records.query",
+          payload: {
+            search: debouncedSearch,
+            page,
+            pageSize,
+          },
+        };
 
-      setRecords(result.items ?? []);
-      setTotal(result.total ?? 0);
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : "Load records failed";
-      setRecords([]);
-      setTotal(0);
-      setError(message);
-    } finally {
-      setLoading(false);
+        const result = await bus.send<QueryResponse>(request);
+
+        if (cancelled) return;
+
+        setRecords(result.items ?? []);
+        setTotal(result.total ?? 0);
+        setTotalPages(result.totalPages ?? 0);
+
+        // Đồng bộ page nếu Data Vault clamp lại
+        if (typeof result.page === "number" && result.page !== page) {
+          setPage(result.page);
+        }
+      } catch (err) {
+        if (cancelled) return;
+
+        const message =
+          err instanceof Error ? err.message : "Load records failed";
+        setRecords([]);
+        setTotal(0);
+        setTotalPages(0);
+        setError(message);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
     }
+
+    fetchRecords();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bus, debouncedSearch, page, pageSize]);
+
+  function handlePrevPage() {
+    setPage((current) => Math.max(1, current - 1));
+  }
+
+  function handleNextPage() {
+    setPage((current) => {
+      if (totalPages === 0) return 1;
+      return Math.min(totalPages, current + 1);
+    });
   }
 
   return (
@@ -116,10 +167,6 @@ export default function App() {
       <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
         <button onClick={handlePing} disabled={!canSend}>
           Ping Data Vault
-        </button>
-
-        <button onClick={handleLoadRecords} disabled={!canSend || loading}>
-          {loading ? "Loading..." : "Load Records"}
         </button>
       </div>
 
@@ -141,8 +188,12 @@ export default function App() {
           <strong>Ping Result:</strong> {pingResult || "No response yet"}
         </div>
 
-        <div>
+        <div style={{ marginBottom: 8 }}>
           <strong>Total Records:</strong> {total}
+        </div>
+
+        <div>
+          <strong>Page:</strong> {totalPages === 0 ? 0 : page} / {totalPages}
         </div>
 
         {error && (
@@ -160,19 +211,58 @@ export default function App() {
           marginBottom: 24,
         }}
       >
+        <h2 style={{ marginTop: 0 }}>Search</h2>
+
+        <input
+          type="text"
+          placeholder="Search name or email..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          style={{
+            padding: 10,
+            width: "100%",
+            marginBottom: 12,
+            borderRadius: 6,
+            border: "1px solid #ccc",
+            boxSizing: "border-box",
+          }}
+        />
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+          <button onClick={handlePrevPage} disabled={loading || page <= 1}>
+            Prev
+          </button>
+
+          <button
+            onClick={handleNextPage}
+            disabled={loading || totalPages === 0 || page >= totalPages}
+          >
+            Next
+          </button>
+        </div>
+
         <h2 style={{ marginTop: 0 }}>Records</h2>
 
-        {records.length === 0 ? (
-          <p style={{ margin: 0 }}>No records loaded.</p>
+        {loading ? (
+          <p style={{ margin: 0 }}>Searching...</p>
+        ) : records.length === 0 ? (
+          <p style={{ margin: 0 }}>No matching data.</p>
         ) : (
-          <ul style={{ margin: 0, paddingLeft: 20 }}>
-            {records.map((record) => (
-              <li key={record.id} style={{ marginBottom: 6 }}>
-                <strong>{record.name}</strong> — {record.email} —{" "}
-                {record.status}
-              </li>
-            ))}
-          </ul>
+          <>
+            <p style={{ marginTop: 0 }}>
+              Showing {records.length} records on page {page} / {totalPages}{" "}
+              (total matched: {total})
+            </p>
+
+            <ul style={{ margin: 0, paddingLeft: 20 }}>
+              {records.map((record) => (
+                <li key={record.id} style={{ marginBottom: 6 }}>
+                  <strong>{record.name}</strong> — {record.email} —{" "}
+                  {record.status}
+                </li>
+              ))}
+            </ul>
+          </>
         )}
       </div>
 
