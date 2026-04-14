@@ -1,4 +1,4 @@
-export type VaultAction = "ping" | "records.query";
+export type VaultAction = "ping" | "records.query" | "records.getByIds";
 
 export type VaultRequest<TPayload = unknown> = {
   id: string;
