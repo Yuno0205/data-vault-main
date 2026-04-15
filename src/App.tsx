@@ -19,6 +19,11 @@ type QueryResponse = {
   page: number;
   pageSize: number;
   totalPages: number;
+  metrics?: {
+    queryTimeMs: number;
+    hydrateTimeMs: number;
+    vaultProcessingMs: number;
+  };
 };
 
 //Bulk insert
@@ -49,6 +54,10 @@ export default function App() {
   const [statusFilter, setStatusFilter] = useState<
     "all" | "active" | "inactive"
   >("all");
+  const [queryTimeMs, setQueryTimeMs] = useState(0);
+  const [hydrateTimeMs, setHydrateTimeMs] = useState(0);
+  const [vaultProcessingMs, setVaultProcessingMs] = useState(0);
+  const [roundTripMs, setRoundTripMs] = useState(0);
 
   const debouncedSearch = useDebouncedValue(searchTerm, 200);
 
@@ -170,6 +179,8 @@ export default function App() {
       setError("");
 
       try {
+        const startedAt = performance.now();
+
         const request: VaultRequest = {
           id: crypto.randomUUID(),
           action: "records.query",
@@ -183,13 +194,19 @@ export default function App() {
 
         const result = await bus.send<QueryResponse>(request);
 
+        const endedAt = performance.now();
+
         if (cancelled) return;
+
+        setRoundTripMs(endedAt - startedAt);
+        setQueryTimeMs(result.metrics?.queryTimeMs ?? 0);
+        setHydrateTimeMs(result.metrics?.hydrateTimeMs ?? 0);
+        setVaultProcessingMs(result.metrics?.vaultProcessingMs ?? 0);
 
         setRecords(result.items ?? []);
         setTotal(result.total ?? 0);
         setTotalPages(result.totalPages ?? 0);
 
-        // Đồng bộ page nếu Data Vault clamp lại
         if (typeof result.page === "number" && result.page !== page) {
           setPage(result.page);
         }
@@ -202,6 +219,10 @@ export default function App() {
         setTotal(0);
         setTotalPages(0);
         setError(message);
+        setQueryTimeMs(0);
+        setHydrateTimeMs(0);
+        setVaultProcessingMs(0);
+        setRoundTripMs(0);
       } finally {
         if (!cancelled) {
           setLoading(false);
@@ -394,8 +415,11 @@ export default function App() {
         ) : (
           <>
             <p style={{ marginTop: 0 }}>
-              Showing {records.length} records on page {page} / {totalPages}{" "}
-              (total matched: {total})
+              Showing {records.length} records with keyword "{searchTerm}" in{" "}
+              <span style={{ color: "green" }}>
+                {roundTripMs.toFixed(2)} ms
+              </span>{" "}
+              on page {page} / {totalPages} (total matched: {total})
             </p>
 
             <ul style={{ margin: 0, paddingLeft: 20 }}>
@@ -408,6 +432,34 @@ export default function App() {
             </ul>
           </>
         )}
+      </div>
+
+      {/* Speed response */}
+      <div
+        style={{
+          padding: 12,
+          border: "1px solid #ddd",
+          borderRadius: 8,
+          marginBottom: 16,
+          background: "#fafafa",
+        }}
+      >
+        <div style={{ marginBottom: 8 }}>
+          <strong>Query Engine Time:</strong> {queryTimeMs.toFixed(2)} ms
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <strong>Hydrate Time:</strong> {hydrateTimeMs.toFixed(2)} ms
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <strong>Vault Processing Time:</strong> {vaultProcessingMs.toFixed(2)}{" "}
+          ms
+        </div>
+
+        <div>
+          <strong>Round-trip Time:</strong> {roundTripMs.toFixed(2)} ms
+        </div>
       </div>
 
       <div>
