@@ -3,8 +3,10 @@ import { MessageBus } from "./messaging/messageBus";
 import type { VaultRequest } from "./messaging/types";
 import { useDebouncedValue } from "./hooks/useDebouncedValue";
 
-const DATA_VAULT_ORIGIN = "http://localhost:5174";
-const DATA_VAULT_URL = "http://localhost:5174";
+const DATA_VAULT_ORIGIN =
+  import.meta.env.VITE_DATA_VAULT_ORIGIN || "http://localhost:5174";
+const DATA_VAULT_URL =
+  import.meta.env.VITE_DATA_VAULT_URL || "http://localhost:5174";
 
 type RecordItem = {
   id: string;
