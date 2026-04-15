@@ -1,4 +1,8 @@
-export type VaultAction = "ping" | "records.query" | "records.getByIds";
+export type VaultAction =
+  | "ping"
+  | "records.query"
+  | "records.getByIds"
+  | "records.bulkInsert";
 
 export type VaultRequest<TPayload = unknown> = {
   id: string;
@@ -11,4 +15,13 @@ export type VaultResponse<TData = unknown> = {
   status: "success" | "error";
   data?: TData;
   error?: string;
+};
+
+export type VaultProgressEvent = {
+  type: "records.bulkInsert.progress";
+  data: {
+    processed: number;
+    total: number;
+    percent: number;
+  };
 };

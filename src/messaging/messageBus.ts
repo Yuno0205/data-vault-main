@@ -1,4 +1,4 @@
-import type { VaultRequest, VaultResponse } from "./types";
+import type { VaultProgressEvent, VaultRequest, VaultResponse } from "./types";
 
 type PendingRequest = {
   resolve: (value: unknown) => void;
@@ -6,10 +6,13 @@ type PendingRequest = {
   timeoutId: number;
 };
 
+type ProgressListener = (event: VaultProgressEvent) => void;
+
 export class MessageBus {
   private iframeWindow: Window;
   private targetOrigin: string;
   private pending = new Map<string, PendingRequest>();
+  private progressListeners = new Set<ProgressListener>();
 
   constructor(iframeWindow: Window, targetOrigin: string) {
     this.iframeWindow = iframeWindow;
@@ -17,36 +20,60 @@ export class MessageBus {
     window.addEventListener("message", this.handleMessage);
   }
 
-  send<TResponse>(request: VaultRequest, timeoutMs = 5000): Promise<TResponse> {
+  send<TResponse>(
+    request: VaultRequest,
+    timeoutMs = 30000,
+  ): Promise<TResponse> {
     return new Promise((resolve, reject) => {
       const timeoutId = window.setTimeout(() => {
         this.pending.delete(request.id);
         reject(new Error(`Request timed out: ${request.action}`));
       }, timeoutMs);
 
-      this.pending.set(request.id, { resolve, reject, timeoutId });
+      this.pending.set(request.id, {
+        resolve: (value: unknown) => resolve(value as TResponse),
+        reject,
+        timeoutId,
+      });
       this.iframeWindow.postMessage(request, this.targetOrigin);
     });
   }
 
-  private handleMessage = (event: MessageEvent<VaultResponse>) => {
+  onProgress(listener: ProgressListener) {
+    this.progressListeners.add(listener);
+
+    return () => {
+      this.progressListeners.delete(listener);
+    };
+  }
+
+  private handleMessage = (
+    event: MessageEvent<VaultResponse | VaultProgressEvent>,
+  ) => {
     if (event.origin !== this.targetOrigin) return;
 
-    const response = event.data;
-    if (!response?.id) return;
+    const payload = event.data;
+    if (!payload) return;
 
-    const pendingRequest = this.pending.get(response.id);
-    if (!pendingRequest) return;
-
-    window.clearTimeout(pendingRequest.timeoutId);
-    this.pending.delete(response.id);
-
-    if (response.status === "success") {
-      pendingRequest.resolve(response.data);
+    if ("type" in payload && payload.type === "records.bulkInsert.progress") {
+      this.progressListeners.forEach((listener) => listener(payload));
       return;
     }
 
-    pendingRequest.reject(new Error(response.error || "Unknown vault error"));
+    if (!("id" in payload) || !payload.id) return;
+
+    const pendingRequest = this.pending.get(payload.id);
+    if (!pendingRequest) return;
+
+    window.clearTimeout(pendingRequest.timeoutId);
+    this.pending.delete(payload.id);
+
+    if (payload.status === "success") {
+      pendingRequest.resolve(payload.data);
+      return;
+    }
+
+    pendingRequest.reject(new Error(payload.error || "Unknown vault error"));
   };
 
   destroy() {
@@ -57,5 +84,6 @@ export class MessageBus {
     }
 
     this.pending.clear();
+    this.progressListeners.clear();
   }
 }

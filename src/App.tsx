@@ -3,6 +3,9 @@ import { MessageBus } from "./messaging/messageBus";
 import type { VaultRequest } from "./messaging/types";
 import { useDebouncedValue } from "./hooks/useDebouncedValue";
 
+const DATA_VAULT_ORIGIN = "http://localhost:5174";
+const DATA_VAULT_URL = "http://localhost:5174";
+
 type RecordItem = {
   id: string;
   name: string;
@@ -18,8 +21,12 @@ type QueryResponse = {
   totalPages: number;
 };
 
-const DATA_VAULT_ORIGIN = "http://localhost:5174";
-const DATA_VAULT_URL = "http://localhost:5174";
+//Bulk insert
+
+type BulkInsertResponse = {
+  inserted: number;
+  totalRecords: number;
+};
 
 export default function App() {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
@@ -33,7 +40,12 @@ export default function App() {
   const [totalPages, setTotalPages] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [bulkProgress, setBulkProgress] = useState(0);
+  const [bulkProcessed, setBulkProcessed] = useState(0);
+  const [bulkTotal, setBulkTotal] = useState(0);
+  const [isBulkInserting, setIsBulkInserting] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
 
   const debouncedSearch = useDebouncedValue(searchTerm, 200);
 
@@ -67,6 +79,60 @@ export default function App() {
     setPage(1);
   }, [debouncedSearch]);
 
+  useEffect(() => {
+    if (!bus) return;
+
+    const unsubscribe = bus.onProgress((event) => {
+      setBulkProcessed(event.data.processed);
+      setBulkTotal(event.data.total);
+      setBulkProgress(event.data.percent);
+    });
+
+    return unsubscribe;
+  }, [bus]);
+
+  //Bulk insert function
+  async function handleBulkInsert() {
+    if (!bus) return;
+
+    setIsBulkInserting(true);
+    setError("");
+    setBulkProcessed(0);
+    setBulkTotal(50000);
+    setBulkProgress(0);
+
+    try {
+      const request: VaultRequest = {
+        id: crypto.randomUUID(),
+        action: "records.bulkInsert",
+        payload: {
+          count: 50000,
+        },
+      };
+
+      const result = await bus.send<BulkInsertResponse>(request, 120000);
+
+      // optional: update ngay total từ response
+      setTotal(result.totalRecords);
+
+      // reset về page 1
+      setPage(1);
+
+      // ép query chạy lại
+      setReloadKey((value) => value + 1);
+      setTimeout(() => {
+        setBulkProgress(0);
+        setBulkProcessed(0);
+        setBulkTotal(0);
+      }, 800);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Bulk insert failed";
+      setError(message);
+    } finally {
+      setIsBulkInserting(false);
+    }
+  }
+
   async function handlePing() {
     if (!bus) return;
 
@@ -88,11 +154,10 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!bus) return;
-
     let cancelled = false;
 
     async function fetchRecords() {
+      if (!bus) return;
       setLoading(true);
       setError("");
 
@@ -140,7 +205,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [bus, debouncedSearch, page, pageSize]);
+  }, [bus, debouncedSearch, page, pageSize, reloadKey]);
 
   function handlePrevPage() {
     setPage((current) => Math.max(1, current - 1));
@@ -167,6 +232,12 @@ export default function App() {
       <div style={{ display: "flex", gap: 12, marginBottom: 16 }}>
         <button onClick={handlePing} disabled={!canSend}>
           Ping Data Vault
+        </button>
+        <button
+          onClick={handleBulkInsert}
+          disabled={!canSend || isBulkInserting}
+        >
+          {isBulkInserting ? "Bulk Inserting..." : "Bulk Insert 50,000"}
         </button>
       </div>
 
@@ -201,6 +272,48 @@ export default function App() {
             <strong>Error:</strong> {error}
           </div>
         )}
+      </div>
+
+      <div
+        style={{
+          padding: 12,
+          border: "1px solid #ddd",
+          borderRadius: 8,
+          marginBottom: 16,
+          background: "#fafafa",
+        }}
+      >
+        <div style={{ marginBottom: 8 }}>
+          <strong>Bulk Insert:</strong>{" "}
+          {isBulkInserting ? "Running..." : "Idle"}
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <strong>Progress:</strong> {bulkProgress}%
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <strong>Processed:</strong> {bulkProcessed} / {bulkTotal}
+        </div>
+
+        <div
+          style={{
+            width: "100%",
+            height: 12,
+            background: "#e5e7eb",
+            borderRadius: 999,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              width: `${bulkProgress}%`,
+              height: "100%",
+              background: "#2563eb",
+              transition: "width 120ms linear",
+            }}
+          />
+        </div>
       </div>
 
       <div

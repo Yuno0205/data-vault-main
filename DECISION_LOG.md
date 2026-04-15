@@ -1,212 +1,333 @@
 # DECISION LOG
 
-## 1. Định nghĩa bài toán (Problem Framing)
+## 1. Problem Framing
 
-Mục tiêu của bài toán là xây dựng một hệ thống quản lý dữ liệu hiệu suất cao, trong đó tách biệt hoàn toàn giữa:
+Bài toán yêu cầu xây dựng một hệ thống quản lý dữ liệu hiệu suất cao trong trình duyệt, với các ràng buộc:
 
-- Main App (UI Layer)
-- Data Vault (Data Processing Layer)
+- UI (Main App) không được truy cập trực tiếp dữ liệu
+- Data Vault phải hoạt động độc lập
+- Giao tiếp thông qua messaging bất đồng bộ
+- Xử lý được khối lượng dữ liệu lớn (50,000+ records)
+- UI phải luôn responsive (không bị freeze)
 
-Ràng buộc quan trọng nhất:
-Main App không được phép truy cập trực tiếp hoặc sở hữu dữ liệu.
-
-Mọi thao tác (CRUD, search, filter) phải thông qua cơ chế messaging bất đồng bộ giữa hai môi trường.
-
-Điều này khiến hệ thống trở thành một dạng “mini distributed system” chạy hoàn toàn trong trình duyệt.
+Về bản chất, đây là một bài toán mô phỏng kiến trúc phân tán (distributed system) ở phía frontend.
 
 ---
 
-## 2. Technical Choices (Lựa chọn kỹ thuật)
+## 2. Technical Architecture
 
-### 2.1 Tách Main App và Data Vault bằng iframe
+### 2.1 Tách Main App và Data Vault
 
-Hệ thống được chia thành 2 ứng dụng độc lập:
+Hệ thống được chia thành:
 
-- Main App: xử lý giao diện và tương tác người dùng
-- Data Vault: xử lý lưu trữ và truy vấn dữ liệu
+- Main App → xử lý UI
+- Data Vault → xử lý data
 
-Data Vault được nhúng qua iframe để đảm bảo tính cách ly.
+Data Vault được nhúng bằng iframe.
 
-**Lý do lựa chọn:**
+**Lý do:**
 
-- Ép buộc boundary giữa UI và data layer
-- Tránh việc UI truy cập trực tiếp vào dữ liệu
-- Mô phỏng kiến trúc frontend ↔ backend ngoài đời thực
+- Tạo boundary rõ ràng giữa UI và data layer
+- Ngăn UI truy cập trực tiếp dữ liệu
+- Mô phỏng kiến trúc frontend ↔ backend
 
 ---
 
-### 2.2 Giao tiếp bằng postMessage (Asynchronous Messaging)
+### 2.2 Messaging bằng postMessage
 
-Sử dụng `window.postMessage` để giao tiếp giữa hai môi trường.
+Sử dụng `window.postMessage` để giao tiếp giữa 2 môi trường.
 
-Xây dựng một protocol gồm:
+Thiết kế protocol gồm:
 
 - Request / Response
-- ID để mapping request-response
+- Correlation bằng `id`
 - Action-based routing
 
-Ví dụ các action:
+Các action chính:
 
-- "ping"
-- "records.query"
-- "records.getByIds"
+- `ping`
+- `records.query`
+- `records.getByIds`
+- `records.bulkInsert`
 
-**Lý do lựa chọn:**
+**Lý do:**
 
-- Đáp ứng đúng constraint của đề bài
-- Mô phỏng giao tiếp API
-- Hỗ trợ bất đồng bộ và nhiều request đồng thời
+- Đáp ứng constraint đề bài
+- Mô phỏng API communication
+- Hỗ trợ async processing
 
 ---
 
 ### 2.3 MessageBus (Main App)
 
-Thay vì gọi `postMessage` trực tiếp, xây dựng abstraction `MessageBus`.
+Tạo abstraction `MessageBus` thay vì dùng trực tiếp `postMessage`.
 
 Chức năng:
 
 - Gửi request
 - Mapping response theo ID
-- Xử lý timeout và error
+- Timeout handling
+- Lắng nghe progress event
 
-**Lý do lựa chọn:**
+**Lý do:**
 
-- Tách UI khỏi logic messaging
-- Tăng khả năng maintain
-- Dễ mở rộng về sau
+- Tách UI khỏi messaging logic
+- Code sạch và dễ maintain
+- Dễ mở rộng thêm event (progress)
 
 ---
 
 ### 2.4 Router trong Data Vault
 
-Xây dựng `setupVaultRouter` đóng vai trò giống controller.
+`setupVaultRouter` đóng vai trò giống controller.
 
 Chức năng:
 
 - Nhận message
-- Phân luồng theo action
+- Dispatch theo action
 - Trả response
 
-**Lý do lựa chọn:**
+**Lý do:**
 
-- Giống pattern backend controller
-- Tách logic rõ ràng
-- Dễ scale khi thêm feature
+- Tổ chức code giống backend
+- Dễ mở rộng thêm API
 
 ---
 
-### 2.5 Thiết kế Data Engine
+## 3. Data Engine Design
 
-Data Vault được tổ chức thành:
+Data Vault được thiết kế thành 3 lớp:
 
-- RecordStore → lưu data gốc (Map<id, record>)
-- IndexStore → lưu index để search nhanh
-- QueryEngine → xử lý logic query
+### 3.1 RecordStore
 
-**Lý do lựa chọn:**
+- Lưu dữ liệu dạng Map<id, record>
+- Truy xuất nhanh theo id
 
-- Tách storage và processing
-- Cho phép tối ưu mà không ảnh hưởng UI
+### 3.2 IndexStore
+
+- Index theo:
+  - token (search)
+  - status (filter)
+- Sử dụng Map<string, Set<id>>
+
+### 3.3 QueryEngine
+
+- Xử lý:
+  - search
+  - filter
+  - pagination
+
+**Lý do:**
+
+- Tách biệt storage và query logic
+- Có thể tối ưu mà không ảnh hưởng UI
 - Gần với kiến trúc backend thực tế
 
 ---
 
-### 2.6 Dữ liệu giả lập (Mock Data)
+## 4. Search & Query Strategy
 
-Sinh ~10,000 records ban đầu.
+### 4.1 Token-based search
 
-**Lý do lựa chọn:**
+- Split text thành token
+- Match bằng index
 
-- Test được performance cơ bản
-- Không phụ thuộc backend
-- Dễ debug
+**Ưu điểm:**
 
----
-
-## 3. Optimization (Tối ưu - Giai đoạn đầu)
-
-Hiện tại chưa tối ưu sâu, nhưng kiến trúc đã chuẩn bị sẵn:
-
-- Sử dụng index thay vì filter array
-- Đẩy toàn bộ query vào Data Vault
-- Không để UI xử lý dữ liệu lớn
-
-Những quyết định này giúp:
-
-- scale lên 500k records dễ hơn
-- tránh bottleneck ở UI
+- Nhanh hơn filter array
+- Scale tốt hơn
 
 ---
 
-## 4. AI Usage & Critical Thinking
+### 4.2 Fix bug "no match fallback"
 
-AI được sử dụng để:
+Ban đầu:
 
-- Gợi ý kiến trúc iframe-based
-- Sinh code khung ban đầu
-- Đề xuất hướng indexing
+- nếu không match → trả full dataset
 
-Tuy nhiên, không áp dụng mù quáng.
+Sau khi sửa:
 
-### Ví dụ cụ thể:
-
-AI ban đầu đề xuất:
-→ filter trực tiếp trong Main App bằng array methods
-
-**Vấn đề:**
-
-- Vi phạm constraint (UI không được access data)
-- Không scale khi data lớn
-
-**Quyết định:**
-
-- Chuyển toàn bộ logic sang Data Vault
-- Xây QueryEngine + IndexStore
+- phân biệt:
+  - empty search → trả full
+  - search không match → trả rỗng
 
 **Kết quả:**
 
-- Kiến trúc đúng yêu cầu
-- Chuẩn bị tốt cho performance optimization
+- UX đúng hơn
+- không render sai 10,000 rows
 
 ---
 
-## 5. Trạng thái hiện tại
+## 5. Pagination Strategy
 
-Hệ thống đã đạt được:
+### 5.1 Pagination ở Data Vault
 
-- Giao tiếp Main App ↔ Data Vault qua iframe
-- Messaging protocol có request/response
-- MessageBus xử lý async communication
-- Router xử lý action trong Data Vault
-- QueryEngine xử lý query cơ bản
-- Render dữ liệu từ Data Vault lên UI
+QueryEngine xử lý:
+
+- total count
+- page
+- pageSize
+- slice data
+
+**Lý do:**
+
+- giảm payload message
+- giảm DOM render
 
 ---
 
-## 6. Hướng phát triển tiếp theo
+### 5.2 Pagination ở UI
 
-- Search realtime + debounce
-- Indexing nâng cao
-- Bulk insert 50,000 records không lag
-- Virtualized list (tối ưu render)
-- Đo thời gian query (benchmark)
+Main App giữ:
 
-## Phase 3 - Pagination and No-Match Handling
+- page
+- pageSize
 
-### Problem
+Trigger query khi:
 
-Even after moving query logic into the Data Vault, the UI could still lag when too many rows were returned and rendered. Another issue was that invalid search terms incorrectly fell back to rendering the full dataset.
+- search thay đổi
+- page thay đổi
 
-### Solution
+---
 
-- Added pagination at the query level
-- Returned only the current page of matched records
-- Distinguished between:
-  - empty search
-  - search with no matching results
+### 5.3 Reset page khi search đổi
 
-### Result
+**Lý do:**
 
-- Reduced message payload size
-- Reduced DOM rendering cost
-- Prevented incorrect fallback to 10,000 rows when search terms did not match any data
+- tránh case page cũ không còn valid
+
+---
+
+## 6. Performance Optimization
+
+### 6.1 Không trả full dataset
+
+→ chỉ trả page hiện tại
+
+### 6.2 Không render full list
+
+→ giảm DOM nodes
+
+### 6.3 Debounce search (200ms)
+
+→ tránh spam request
+
+---
+
+## 7. Bulk Insert Strategy
+
+### 7.1 Không dùng CSV/Excel làm flow chính
+
+**Lý do:**
+
+- đề không yêu cầu parsing file
+- focus vào performance
+- tránh complexity không cần thiết
+
+---
+
+### 7.2 Generate data trong Data Vault
+
+Main App chỉ gửi:
+
+{ action: "records.bulkInsert", payload: { count: 50000 } }
+Lý do:
+
+giảm message payload
+tránh serialize dữ liệu lớn
+đúng vai trò Data Vault
+
+### 7.3 Chunked Processing
+
+Insert theo chunk:
+
+1000 records / chunk
+
+Lý do:
+
+tránh blocking main thread
+cho phép UI cập nhật
+7.4 Yield control
+
+Sau mỗi chunk:
+
+await new Promise(resolve => setTimeout(resolve, 0));
+
+Lý do:
+
+trả quyền control về event loop
+giữ UI responsive
+7.5 Progress Event
+
+Data Vault gửi event:
+
+records.bulkInsert.progress
+
+Main App lắng nghe và update UI.
+
+Lý do:
+
+feedback realtime cho user
+improve UX
+7.6 Non-linear Progress Behavior
+
+Progress không tăng đều vì:
+
+chunk đầu nhanh hơn (data nhỏ)
+chunk sau chậm hơn (data lớn + index + GC)
+progress dựa trên số lượng, không phải thời gian
+
+Kết luận:
+
+chấp nhận được
+phản ánh đúng workload thực 8. UI Responsiveness
+
+Bulk insert vẫn giữ UI mượt vì:
+
+không block thread
+chunk processing
+async messaging
+progress update incremental 9. Trade-offs
+9.1 Không dùng Web Worker
+đơn giản hơn
+vẫn đạt yêu cầu
+có thể thêm nếu cần nâng cấp
+9.2 Không dùng virtualization (hiện tại)
+pagination đã đủ
+tránh over-engineering
+9.3 Progress không tuyến tính
+chấp nhận trade-off
+ưu tiên correctness và responsiveness 10. AI Usage & Critical Thinking
+
+AI được sử dụng để:
+
+gợi ý kiến trúc
+sinh code khung
+đề xuất giải pháp
+
+Nhưng không áp dụng trực tiếp.
+
+Ví dụ:
+
+AI đề xuất:
+
+filter dữ liệu trong Main App
+
+Vấn đề:
+
+vi phạm constraint
+không scale
+
+Quyết định:
+
+chuyển toàn bộ logic sang Data Vault 11. Current Status
+
+Đã hoàn thành:
+
+Messaging system
+Data Vault architecture
+QueryEngine + Indexing
+Search + debounce
+Pagination
+Bulk insert 50,000 records không lag
+Progress tracking
