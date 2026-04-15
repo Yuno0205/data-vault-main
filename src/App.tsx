@@ -46,6 +46,9 @@ export default function App() {
   const [isBulkInserting, setIsBulkInserting] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "active" | "inactive"
+  >("all");
 
   const debouncedSearch = useDebouncedValue(searchTerm, 200);
 
@@ -78,6 +81,11 @@ export default function App() {
   useEffect(() => {
     setPage(1);
   }, [debouncedSearch]);
+
+  // Reset page khi status filter đổi
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter]);
 
   useEffect(() => {
     if (!bus) return;
@@ -167,6 +175,7 @@ export default function App() {
           action: "records.query",
           payload: {
             search: debouncedSearch,
+            status: statusFilter === "all" ? undefined : statusFilter,
             page,
             pageSize,
           },
@@ -205,7 +214,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [bus, debouncedSearch, page, pageSize, reloadKey]);
+  }, [bus, debouncedSearch, statusFilter, page, pageSize, reloadKey]);
 
   function handlePrevPage() {
     setPage((current) => Math.max(1, current - 1));
@@ -223,7 +232,7 @@ export default function App() {
       style={{
         padding: 24,
         fontFamily: "Arial, sans-serif",
-        maxWidth: 1200,
+        width: 1200,
         margin: "0 auto",
       }}
     >
@@ -316,6 +325,7 @@ export default function App() {
         </div>
       </div>
 
+      {/* Search */}
       <div
         style={{
           padding: 16,
@@ -326,20 +336,41 @@ export default function App() {
       >
         <h2 style={{ marginTop: 0 }}>Search</h2>
 
-        <input
-          type="text"
-          placeholder="Search name or email..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          style={{
-            padding: 10,
-            width: "100%",
-            marginBottom: 12,
-            borderRadius: 6,
-            border: "1px solid #ccc",
-            boxSizing: "border-box",
-          }}
-        />
+        <div style={{ display: "flex", gap: "1rem" }}>
+          <input
+            type="text"
+            placeholder="Search name or email..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              padding: 10,
+              width: "100%",
+              marginBottom: 12,
+              borderRadius: 6,
+              border: "1px solid #ccc",
+              boxSizing: "border-box",
+            }}
+          />
+
+          {/* Filter */}
+          <div style={{ marginBottom: 12 }}>
+            <select
+              value={statusFilter}
+              onChange={(e) =>
+                setStatusFilter(e.target.value as "all" | "active" | "inactive")
+              }
+              style={{
+                padding: 8,
+                borderRadius: 6,
+                border: "1px solid #ccc",
+              }}
+            >
+              <option value="all">All</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+        </div>
 
         <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
           <button onClick={handlePrevPage} disabled={loading || page <= 1}>
