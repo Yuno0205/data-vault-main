@@ -111,6 +111,74 @@ export default function App() {
 
   const canSend = useMemo(() => bus !== null, [bus]);
 
+  //fetch
+  useEffect(() => {
+    let cancelled = false;
+
+    async function fetchRecords() {
+      if (!bus || !vaultReady) return;
+      setLoading(true);
+      setError("");
+
+      try {
+        const startedAt = performance.now();
+
+        const request: VaultRequest = {
+          id: crypto.randomUUID(),
+          action: "records.query",
+          payload: {
+            search: debouncedSearch,
+            status: statusFilter === "all" ? undefined : statusFilter,
+            page,
+            pageSize,
+          },
+        };
+
+        const result = await bus.send<QueryResponse>(request);
+
+        const endedAt = performance.now();
+
+        if (cancelled) return;
+
+        setRoundTripMs(endedAt - startedAt);
+        setQueryTimeMs(result.metrics?.queryTimeMs ?? 0);
+        setHydrateTimeMs(result.metrics?.hydrateTimeMs ?? 0);
+        setVaultProcessingMs(result.metrics?.vaultProcessingMs ?? 0);
+
+        setRecords(result.items ?? []);
+        setTotal(result.total ?? 0);
+        setTotalPages(result.totalPages ?? 0);
+
+        if (typeof result.page === "number" && result.page !== page) {
+          setPage(result.page);
+        }
+      } catch (err) {
+        if (cancelled) return;
+
+        const message =
+          err instanceof Error ? err.message : "Load records failed";
+        setRecords([]);
+        setTotal(0);
+        setTotalPages(0);
+        setError(message);
+        setQueryTimeMs(0);
+        setHydrateTimeMs(0);
+        setVaultProcessingMs(0);
+        setRoundTripMs(0);
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    }
+
+    fetchRecords();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [bus, debouncedSearch, statusFilter, page, pageSize, reloadKey]);
+
   // Reset page khi search đổi
   useEffect(() => {
     setPage(1);
@@ -224,73 +292,6 @@ export default function App() {
       setError(message);
     }
   }
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function fetchRecords() {
-      if (!bus || !vaultReady) return;
-      setLoading(true);
-      setError("");
-
-      try {
-        const startedAt = performance.now();
-
-        const request: VaultRequest = {
-          id: crypto.randomUUID(),
-          action: "records.query",
-          payload: {
-            search: debouncedSearch,
-            status: statusFilter === "all" ? undefined : statusFilter,
-            page,
-            pageSize,
-          },
-        };
-
-        const result = await bus.send<QueryResponse>(request);
-
-        const endedAt = performance.now();
-
-        if (cancelled) return;
-
-        setRoundTripMs(endedAt - startedAt);
-        setQueryTimeMs(result.metrics?.queryTimeMs ?? 0);
-        setHydrateTimeMs(result.metrics?.hydrateTimeMs ?? 0);
-        setVaultProcessingMs(result.metrics?.vaultProcessingMs ?? 0);
-
-        setRecords(result.items ?? []);
-        setTotal(result.total ?? 0);
-        setTotalPages(result.totalPages ?? 0);
-
-        if (typeof result.page === "number" && result.page !== page) {
-          setPage(result.page);
-        }
-      } catch (err) {
-        if (cancelled) return;
-
-        const message =
-          err instanceof Error ? err.message : "Load records failed";
-        setRecords([]);
-        setTotal(0);
-        setTotalPages(0);
-        setError(message);
-        setQueryTimeMs(0);
-        setHydrateTimeMs(0);
-        setVaultProcessingMs(0);
-        setRoundTripMs(0);
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    }
-
-    fetchRecords();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [bus, debouncedSearch, statusFilter, page, pageSize, reloadKey]);
 
   function handlePrevPage() {
     setPage((current) => Math.max(1, current - 1));
