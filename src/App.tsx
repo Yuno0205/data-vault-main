@@ -58,6 +58,8 @@ export default function App() {
   const [hydrateTimeMs, setHydrateTimeMs] = useState(0);
   const [vaultProcessingMs, setVaultProcessingMs] = useState(0);
   const [roundTripMs, setRoundTripMs] = useState(0);
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
+  const isBulkJobRunning = isBulkInserting || isBulkUpdating;
 
   const debouncedSearch = useDebouncedValue(searchTerm, 200);
 
@@ -147,6 +149,37 @@ export default function App() {
       setError(message);
     } finally {
       setIsBulkInserting(false);
+    }
+  }
+
+  //Bulk update function
+  async function handleBulkUpdate(status: "active" | "inactive") {
+    if (!bus) return;
+
+    setIsBulkUpdating(true);
+
+    try {
+      await bus.send(
+        {
+          id: crypto.randomUUID(),
+          action: "records.bulkUpdateStatus",
+          payload: { status },
+        },
+        120000,
+      );
+
+      setReloadKey((v) => v + 1);
+
+      setTimeout(() => {
+        setBulkProgress(0);
+        setBulkProcessed(0);
+        setBulkTotal(0);
+      }, 800);
+      
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsBulkUpdating(false);
     }
   }
 
@@ -265,10 +298,30 @@ export default function App() {
         </button>
         <button
           onClick={handleBulkInsert}
-          disabled={!canSend || isBulkInserting}
+          disabled={!canSend || isBulkJobRunning}
         >
           {isBulkInserting ? "Bulk Inserting..." : "Bulk Insert 50,000"}
         </button>
+        <div
+          style={{
+            display: "flex",
+            gap: 12,
+          }}
+        >
+          <button
+            onClick={() => handleBulkUpdate("active")}
+            disabled={!canSend || isBulkJobRunning}
+          >
+            Set All Active
+          </button>
+
+          <button
+            onClick={() => handleBulkUpdate("inactive")}
+            disabled={!canSend || isBulkJobRunning}
+          >
+            Set All Inactive
+          </button>
+        </div>
       </div>
 
       <div
@@ -314,8 +367,8 @@ export default function App() {
         }}
       >
         <div style={{ marginBottom: 8 }}>
-          <strong>Bulk Insert:</strong>{" "}
-          {isBulkInserting ? "Running..." : "Idle"}
+          <strong>Bulk Action:</strong>{" "}
+          {isBulkInserting || isBulkUpdating ? "Running..." : "Idle"}
         </div>
 
         <div style={{ marginBottom: 8 }}>

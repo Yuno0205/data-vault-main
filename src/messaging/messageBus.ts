@@ -60,6 +60,15 @@ export class MessageBus {
       return;
     }
 
+    if (
+      "type" in payload &&
+      (payload.type === "records.bulkInsert.progress" ||
+        payload.type === "records.bulkUpdateStatus.progress")
+    ) {
+      this.progressListeners.forEach((listener) => listener(payload));
+      return;
+    }
+
     if (!("id" in payload) || !payload.id) return;
 
     const pendingRequest = this.pending.get(payload.id);
