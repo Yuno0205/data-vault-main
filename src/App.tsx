@@ -97,6 +97,8 @@ export default function App() {
     const handleLoad = () => {
       if (!iframe.contentWindow) return;
 
+      setVaultReady(false);
+
       currentBus?.destroy();
       currentBus = new MessageBus(iframe.contentWindow, DATA_VAULT_ORIGIN);
       setBus(currentBus);
@@ -179,7 +181,15 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [bus, debouncedSearch, statusFilter, page, pageSize, reloadKey]);
+  }, [
+    bus,
+    vaultReady,
+    debouncedSearch,
+    statusFilter,
+    page,
+    pageSize,
+    reloadKey,
+  ]);
 
   // Reset page khi search đổi
   useEffect(() => {
