@@ -60,8 +60,31 @@ export default function App() {
   const [roundTripMs, setRoundTripMs] = useState(0);
   const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const isBulkJobRunning = isBulkInserting || isBulkUpdating;
+  const [vaultReady, setVaultReady] = useState(false);
 
   const debouncedSearch = useDebouncedValue(searchTerm, 200);
+
+  // Kết nối với vault khi vault sẵn sàng, tránh việc tạo MessageBus quá sớm
+  useEffect(() => {
+    function handleVaultReady(event: MessageEvent) {
+      if (event.origin !== DATA_VAULT_ORIGIN) return;
+
+      if (
+        typeof event.data === "object" &&
+        event.data !== null &&
+        "type" in event.data &&
+        event.data.type === "vault.ready"
+      ) {
+        setVaultReady(true);
+      }
+    }
+
+    window.addEventListener("message", handleVaultReady);
+
+    return () => {
+      window.removeEventListener("message", handleVaultReady);
+    };
+  }, []);
 
   useEffect(() => {
     const iframe = iframeRef.current;
@@ -175,7 +198,6 @@ export default function App() {
         setBulkProcessed(0);
         setBulkTotal(0);
       }, 800);
-      
     } catch (err) {
       console.error(err);
     } finally {
@@ -207,7 +229,7 @@ export default function App() {
     let cancelled = false;
 
     async function fetchRecords() {
-      if (!bus) return;
+      if (!bus || !vaultReady) return;
       setLoading(true);
       setError("");
 
@@ -335,7 +357,11 @@ export default function App() {
       >
         <div style={{ marginBottom: 8 }}>
           <strong>Vault connection:</strong>{" "}
-          {canSend ? "Ready" : "Waiting for iframe..."}
+          {canSend
+            ? vaultReady
+              ? "Ready"
+              : "Initializing..."
+            : "Waiting for iframe..."}
         </div>
 
         <div style={{ marginBottom: 8 }}>
